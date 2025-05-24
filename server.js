@@ -37,17 +37,10 @@ function createDeck() {
 
 }
 
-function drawHand() {
-  return deck.splice(0, 4);
-}
-
-function getCenterCard() {
-  if (!centerCard) centerCard = deck.pop();
-  return centerCard;
-}
-
 function nextTurn() {
+  const previousTurn = currentTurnIndex;
   currentTurnIndex = (currentTurnIndex + 1) % players.length;
+  console.log(`turn changed: ${previousTurn} -> ${currentTurnIndex}`);
 }
 
 
@@ -66,10 +59,12 @@ app.post("/join", (req, res) => {
     const newPlayer = {
       id: playerID,
       hand: drawHand(), 
-      index: players.length
+      index: players.length,
+      lastSeen: Date.now()
     };
 
     players.push(newPlayer);
+    console.log(`Player ${newPlayer.index} joined the game. Total players: ${players.length}`);
 
     res.json({
       status: 'ok', 
@@ -78,13 +73,13 @@ app.post("/join", (req, res) => {
       player_index: newPlayer.index, 
       hand: newPlayer.hand, 
       center_card: getCenterCard(), 
-      current_turn_index: currentTurnIndex
+      current_turn_index: currentTurnIndex,
+      total_players: players.length
     });
   } catch (error) {
     console.error('Error in join:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Internal server error'
     });
   }
 });
@@ -100,10 +95,20 @@ app.post("/play_card", (req, res) => {
       });
     }
 
+    console.log(`${currentTurnIndex}`);
+    console.log(`${player_index}`);
+    console.log(`${players.length}`);
+    console.log(`${players.map(p => p.index).join(', ')}`);
+
     if (player_index !== currentTurnIndex) {
       return res.status(403).json({ 
         status: "error", 
-        message: "Not your turn" 
+        message: `not ur turn current turn: ${currentTurnIndex} ur index: ${player_index}`,
+        game_state: {
+          current_turn: currentTurnIndex,
+          total_players: players.length,
+          active_players: players.map(p => p.index)
+        }
       });
     }
 
@@ -117,13 +122,15 @@ app.post("/play_card", (req, res) => {
 
     centerCard = card;
     nextTurn();
-    console.log(`Player ${player_index} played:`, card);
+    console.log(`Player ${player_index} played card. Next turn: ${currentTurnIndex}`);
 
     res.json({
       status: "ok",
       message: "Card played",
       center_card: centerCard,
       current_turn_index: currentTurnIndex,
+      total_players: players.length,
+      active_players: players.map(p => p.index)
     });
   } catch (error) {
     console.error('Error in play_card:', error);
@@ -140,6 +147,7 @@ app.get("/state", (req, res) => {
       center_card: centerCard,
       current_turn_index: currentTurnIndex,
       deck_count: deck.length,
+      total_players: players.length,
       players: players.map(p => ({ 
         index: p.index, 
         hand_size: p.hand.length
@@ -154,6 +162,57 @@ app.get("/state", (req, res) => {
   }
 });
 
-http.createServer(app).listen(3000, () => {
-  console.log("Server 22122222222 running on http://localhost:3000");
+
+app.get("/check_player/:playerId", (req, res) => {
+  const { playerId } = req.params;
+  const player = players.find(p => p.id === playerId);
+  
+  if (!player) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Player not found'
+    });
+  }
+
+  player.lastSeen = Date.now();
+  res.json({
+    status: 'ok',
+    player_index: player.index,
+    current_turn_index: currentTurnIndex
+  });
 });
+
+
+app.post("/reset", (req, res) => {
+  resetGame();
+  res.json({
+    status: 'ok',
+    message: 'Game reset complete'
+  });
+});
+
+
+setInterval(() => {
+  const now = Date.now();
+  const inactiveTimeout = 30000;
+  
+  const activePlayers = players.filter(player => {
+    const isActive = (now - player.lastSeen) < inactiveTimeout;
+    if (!isActive) {
+      console.log(`Removing inactive player ${player.index}`);
+    }
+    return isActive;
+  });
+
+  if (activePlayers.length !== players.length) {
+    console.log(`Cleaned up ${players.length - activePlayers.length} inactive players`);
+    players = activePlayers;
+    if (players.length === 0) {
+      resetGame();
+    }
+  }
+}, 30000);
+
+http.createServer(app).listen(3000, () => {
+  console.log("Server 12running on http://localhost:3000");
+}); 
