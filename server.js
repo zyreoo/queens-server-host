@@ -2,7 +2,6 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const {v4: uuidv4} = require('uuid');
-const { default: next } = require("next");
 
 const app = express();
 app.use(cors());
@@ -461,6 +460,7 @@ app.get("/rooms", (req, res) => {
   }
 });
 
-http.createServer(app).listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 }); 
