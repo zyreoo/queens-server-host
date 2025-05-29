@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "server.js": {
+      "runtime": "node"
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
