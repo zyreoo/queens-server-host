@@ -1,7 +1,7 @@
 {
   "functions": {
     "server.js": {
-      "runtime": "nodejs18.x"
+      "runtime": "nodejs18"
     }
   },
   "rewrites": [
@@ -10,4 +10,4 @@
       "destination": "/server.js"
     }
   ]
-} 
+}
