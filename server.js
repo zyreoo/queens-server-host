@@ -28,7 +28,8 @@ function createRoom() {
     queensPlayerIndex: null,
     finalRoundActive: false,
     finalTurnCount: 0,
-    initialSelectionMode: true
+    initialSelectionMode: true,
+    lastActivity: Date.now()
   };
   createDeck(roomId);
   return roomId;
@@ -92,12 +93,22 @@ function nextTurn(roomId) {
   }
   const nextPlayerIndex = (room.currentTurnIndex + 1) % room.players.length;
   const nextPlayer = room.players[nextPlayerIndex];
-  if (room.deck.length > 0) {
-    const drawnCard = room.deck.pop();
-    nextPlayer.hand.push(drawnCard);
+  
+  if (!room.finalRoundActive || nextPlayerIndex !== room.queensPlayerIndex) {
+    if (room.deck.length > 0) {
+      const drawnCard = room.deck.pop();
+      nextPlayer.hand.push(drawnCard);
+    }
   }
+
   room.currentTurnIndex = nextPlayerIndex;
   console.log(`Turn changed to player ${room.currentTurnIndex} in room ${roomId}`);
+  
+  if (room.finalRoundActive && room.currentTurnIndex === room.queensPlayerIndex) {
+      const result = calculateFinalScore(roomId);
+      return { game_over: true, ...result };
+  }
+
   return { game_over: false };
 }
 
@@ -134,6 +145,7 @@ function calculateFinalScore(roomId) {
 app.post("/create_room", (req, res) => {
   try {
     const roomId = createRoom();
+    rooms[roomId].lastActivity = Date.now();
     res.json({
       status: "ok",
       room_id: roomId
@@ -194,6 +206,7 @@ app.post("/join", (req, res) => {
     };
 
     room.players.push(newPlayer);
+    room.lastActivity = Date.now();
     console.log(`player ${newPlayer.index} joined room ${room_id}, total players: ${room.players.length}`);
 
     res.json({
@@ -274,6 +287,7 @@ app.post("/play_card", (req, res) => {
     player.hand.splice(cardIndex, 1);
     
     room.centerCard = null;
+    room.lastActivity = Date.now();
 
     let response = { 
       status: "ok", 
@@ -345,6 +359,10 @@ app.post("/jack_swap", (req, res) => {
     if (player_index !== room.currentTurnIndex) {
       return res.status(403).json({ status: "error", message: "Not your turn" });
     }
+    
+    if (room.finalRoundActive && player_index === room.queensPlayerIndex) {
+        return res.status(400).json({ status: "error", message: "Cannot swap cards after calling Queens." });
+    }
 
     const player = room.players[player_index];
     const opponent = room.players.find(p => p.index !== player_index);
@@ -395,11 +413,15 @@ app.post("/call_queens", (req, res) => {
     room.finalRoundActive = true;
     room.finalTurnCount = 0;
     nextTurn(room_id);
+    room.lastActivity = Date.now();
 
     res.json({
       status: "ok",
       message: "Queens called! Final round started.",
-      current_turn_index: room.currentTurnIndex
+      current_turn_index: room.currentTurnIndex,
+      queens_triggered: room.queensTriggered,
+      queens_player_index: room.queensPlayerIndex,
+      final_round_active: room.finalRoundActive
     });
   } catch (error) {
     console.error("Error in call_queens:", error);
@@ -450,6 +472,7 @@ app.post("/select_initial_cards", (req, res) => {
     }
 
     room.players[player_index].initialSelectionComplete = true; 
+    room.lastActivity = Date.now();
 
     const all_selected = room.players.every(p => p.initialSelectionComplete);
 
@@ -616,6 +639,23 @@ app.post('/king_reveal', (req, res) => {
     res.status(500).json({ status: 'error', message: 'Internal server error.' });
   }
 });
+
+function checkInactiveRooms() {
+  const now = Date.now();
+  const inactivityTimeout = 2 * 60 * 1000;
+  for (const roomId in rooms) {
+    const room = rooms[roomId];
+    if (now - room.lastActivity > inactivityTimeout) {
+      console.log(`Room ${roomId} is inactive, ending game and closing room.`);
+      const winningPlayerIndex = (room.currentTurnIndex + 1) % room.players.length;
+      const winnerMessage = `Game ended due to inactivity. Player ${winningPlayerIndex + 1} wins.`;
+      
+      delete rooms[roomId];
+      console.log(`Room ${roomId} closed.`);
+    }
+  }
+}
+setInterval(checkInactiveRooms, 30 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
