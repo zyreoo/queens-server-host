@@ -209,6 +209,11 @@ app.post("/join", (req, res) => {
     room.lastActivity = Date.now();
     console.log(`player ${newPlayer.index} joined room ${room_id}, total players: ${room.players.length}`);
 
+    if (room.players.length === MAX_PLAYERS) {
+      room.initialSelectionMode = true;
+      console.log(`Room ${room_id} is full, entering initial selection mode.`);
+    }
+
     res.json({
       status: 'ok',
       room_id: room_id,
@@ -217,7 +222,8 @@ app.post("/join", (req, res) => {
       hand: newPlayer.hand,
       center_card: getCenterCard(room_id),
       current_turn_index: room.currentTurnIndex,
-      total_players: room.players.length
+      total_players: room.players.length,
+      initial_selection_mode: room.initialSelectionMode
     });
 
   } catch (error) {
@@ -432,68 +438,72 @@ app.post("/call_queens", (req, res) => {
 app.post("/select_initial_cards", (req, res) => {
   try {
     const { room_id, player_index, selected_card_ids } = req.body;
-    
+
     if (!rooms[room_id]) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Room not found'
-      });
+      return res.status(404).json({ status: 'error', message: 'Room not found' });
     }
 
     const room = rooms[room_id];
-    const player = room.players.find(p => p.index === player_index);
-
-    if (!player) {
-      return res.status(404).json({
-        status: "error",
-        message: "Player not found"
-      });
-    }
+    const player = room.players[player_index];
 
     if (!room.initialSelectionMode) {
-        return res.status(400).json({ status: "error", message: "Not in initial selection mode" });
+      return res.status(400).json({ status: 'error', message: 'Not in initial selection mode.' });
     }
 
-    if (selected_card_ids.length !== 2) {
-        return res.status(400).json({ status: "error", message: "Please select exactly 2 cards" });
+    if (player.initialSelectionComplete) {
+      return res.status(400).json({ status: 'error', message: 'Initial selection already complete.' });
     }
 
-    let cards_flipped = 0;
-    for (const card_id of selected_card_ids) {
-        const card_in_hand = player.hand.find(c => c.card_id === card_id);
-        if (card_in_hand) {
-            card_in_hand.is_face_up = true;
-            cards_flipped++;
-        }
+    if (!selected_card_ids || selected_card_ids.length !== 2) {
+      return res.status(400).json({ status: 'error', message: 'Must select exactly 2 cards.' });
     }
 
-    if (cards_flipped !== 2) {
-         return res.status(400).json({ status: "error", message: "Selected cards not found in hand" });
-    }
-
-    room.players[player_index].initialSelectionComplete = true; 
-    room.lastActivity = Date.now();
-
-    const all_selected = room.players.every(p => p.initialSelectionComplete);
-
-    if (all_selected) {
-        room.initialSelectionMode = false;
-        console.log("All players selected initial cards, starting game for room:", room_id);
-    }
-
-    res.json({
-      status: "ok",
-      message: "Initial cards selected",
-      hand: player.hand,
-      all_selected: all_selected
+    // Mark selected cards as face up permanently for this player
+    player.hand.forEach(card => {
+      if (selected_card_ids.includes(card.card_id)) {
+        card.is_face_up = true;
+        card.permanent_face_up = true;
+      }
     });
+
+    player.initialSelectionComplete = true;
+    console.log(`Player ${player_index} in room ${room_id} completed initial selection.`);
+
+    // Check if all players have completed initial selection
+    const allSelected = room.players.every(p => p.initialSelectionComplete);
+
+    if (allSelected) {
+      room.initialSelectionMode = false;
+      // Deal remaining cards face down
+      room.players.forEach(p => {
+          while (p.hand.length < 4) {
+              if (room.deck.length > 0) {
+                  p.hand.push(room.deck.pop());
+              } else {
+                  console.warn("Deck is empty, cannot deal full initial hands.");
+                  break;
+              }
+          }
+      });
+
+      getCenterCard(room_id); // Set initial center card
+      console.log(`All players in room ${room_id} completed initial selection. Starting game.`);
+      // Optionally, set the first turn here if not already set
+      if (room.currentTurnIndex === 0 && room.players.length > 0) {
+          // First player (index 0) already has turn 0 by default
+      } else if (room.players.length > 0) {
+           room.currentTurnIndex = 0; // Ensure first player starts
+      }
+
+      res.json({ status: 'ok', message: 'Initial selection complete. Game starting.', initial_selection_mode: false, current_turn_index: room.currentTurnIndex });
+
+    } else {
+      res.json({ status: 'ok', message: 'Selection received. Waiting for other players.' });
+    }
 
   } catch (error) {
     console.error('Error in select_initial_cards:', error);
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
+    res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
