@@ -458,7 +458,7 @@ app.post("/select_initial_cards", (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Must select exactly 2 cards.' });
     }
 
-    // Mark selected cards as face up permanently for this player
+
     player.hand.forEach(card => {
       if (selected_card_ids.includes(card.card_id)) {
         card.is_face_up = true;
@@ -469,12 +469,12 @@ app.post("/select_initial_cards", (req, res) => {
     player.initialSelectionComplete = true;
     console.log(`Player ${player_index} in room ${room_id} completed initial selection.`);
 
-    // Check if all players have completed initial selection
+
     const allSelected = room.players.every(p => p.initialSelectionComplete);
 
     if (allSelected) {
       room.initialSelectionMode = false;
-      // Deal remaining cards face down
+
       room.players.forEach(p => {
           while (p.hand.length < 4) {
               if (room.deck.length > 0) {
@@ -486,13 +486,13 @@ app.post("/select_initial_cards", (req, res) => {
           }
       });
 
-      getCenterCard(room_id); // Set initial center card
+      getCenterCard(room_id); 
       console.log(`All players in room ${room_id} completed initial selection. Starting game.`);
-      // Optionally, set the first turn here if not already set
+
       if (room.currentTurnIndex === 0 && room.players.length > 0) {
-          // First player (index 0) already has turn 0 by default
+
       } else if (room.players.length > 0) {
-           room.currentTurnIndex = 0; // Ensure first player starts
+           room.currentTurnIndex = 0; 
       }
 
       res.json({ status: 'ok', message: 'Initial selection complete. Game starting.', initial_selection_mode: false, current_turn_index: room.currentTurnIndex });
