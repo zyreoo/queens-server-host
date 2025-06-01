@@ -237,7 +237,7 @@ app.post("/join", (req, res) => {
 
 app.post("/play_card", (req, res) => {
   try {
-    const { room_id, player_index, card } = req.body;
+    const { room_id, player_index, card_id } = req.body;
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -264,12 +264,12 @@ app.post("/play_card", (req, res) => {
       });
     }
 
-    const cardIndex = player.hand.findIndex(c => c.card_id === card.card_id);
+    const cardIndex = player.hand.findIndex(c => c.card_id === card_id);
     if (cardIndex === -1) {
       return res.status(400).json({ status: "error", message: "Card not in hand" });
     }
 
-    if (room.reactionMode && card.value !== room.reactionValue) {
+    if (room.reactionMode && player.hand[cardIndex].value !== room.reactionValue) {
       if (!room.reactingPlayers.includes(player_index)) {
         room.reactingPlayers.push(player_index);
         if (room.deck.length > 0) {
@@ -288,7 +288,7 @@ app.post("/play_card", (req, res) => {
       }
     }
 
-    const playedCardData = { ...card };
+    const playedCardData = { ...player.hand[cardIndex] };
 
     player.hand.splice(cardIndex, 1);
     
@@ -458,7 +458,6 @@ app.post("/select_initial_cards", (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Must select exactly 2 cards.' });
     }
 
-
     player.hand.forEach(card => {
       if (selected_card_ids.includes(card.card_id)) {
         card.is_face_up = true;
@@ -469,36 +468,46 @@ app.post("/select_initial_cards", (req, res) => {
     player.initialSelectionComplete = true;
     console.log(`Player ${player_index} in room ${room_id} completed initial selection.`);
 
-
     const allSelected = room.players.every(p => p.initialSelectionComplete);
 
     if (allSelected) {
       room.initialSelectionMode = false;
 
       room.players.forEach(p => {
-          while (p.hand.length < 4) {
-              if (room.deck.length > 0) {
-                  p.hand.push(room.deck.pop());
-              } else {
-                  console.warn("Deck is empty, cannot deal full initial hands.");
-                  break;
-              }
+        while (p.hand.length < 4) {
+          if (room.deck.length > 0) {
+            p.hand.push(room.deck.pop());
+          } else {
+            console.warn("Deck is empty, cannot deal full initial hands.");
+            break;
           }
+        }
       });
 
-      getCenterCard(room_id); 
+      getCenterCard(room_id);
       console.log(`All players in room ${room_id} completed initial selection. Starting game.`);
 
-      if (room.currentTurnIndex === 0 && room.players.length > 0) {
+      room.currentTurnIndex = 0;
 
-      } else if (room.players.length > 0) {
-           room.currentTurnIndex = 0; 
-      }
-
-      res.json({ status: 'ok', message: 'Initial selection complete. Game starting.', initial_selection_mode: false, current_turn_index: room.currentTurnIndex });
-
+      res.json({
+        status: 'ok',
+        message: 'Initial selection complete. Game starting.',
+        initial_selection_mode: false,
+        current_turn_index: room.currentTurnIndex,
+        players: room.players.map(p => ({
+          index: p.index,
+          hand: p.hand
+        }))
+      });
     } else {
-      res.json({ status: 'ok', message: 'Selection received. Waiting for other players.' });
+      res.json({
+        status: 'ok',
+        message: 'Selection received. Waiting for other players.',
+        players: room.players.map(p => ({
+          index: p.index,
+          hand: p.hand
+        }))
+      });
     }
 
   } catch (error) {
