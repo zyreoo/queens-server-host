@@ -313,6 +313,9 @@ app.post("/play_card", (req, res) => {
       response.jack_player_index = player_index;
       response.message = "Jack played! Select a card to swap.";
       response.hand = player.hand;
+      room.jackSwapMode = true;
+      room.jackPlayerIndex = player_index;
+      room.centerCard = playedCardData;
       return res.json(response);
     } else if (playedCardData.rank === "12") {
       const nextPlayerIndex = (player_index + 1) % room.players.length;
