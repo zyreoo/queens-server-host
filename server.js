@@ -178,6 +178,13 @@ app.post("/join", (req, res) => {
     if (player_id) {
       const existing = room.players.find(p => p.id === player_id);
       if (existing) {
+        let countdown = 0;
+        if (room.countdownStart && !room.gameStarted) {
+          countdown = Math.max(0, room.countdownDuration - Math.floor((Date.now() - room.countdownStart) / 1000));
+          if (countdown === 0) {
+            room.gameStarted = true;
+          }
+        }
         return res.json({
           status: "ok",
           room_id: room_id,
@@ -186,7 +193,9 @@ app.post("/join", (req, res) => {
           hand: existing.hand,
           center_card: getCenterCard(room_id),
           current_turn_index: room.currentTurnIndex,
-          total_players: room.players.length
+          total_players: room.players.length,
+          countdown,
+          game_started: room.gameStarted
         });
       }
     }
