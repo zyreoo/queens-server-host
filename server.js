@@ -29,10 +29,7 @@ function createRoom() {
     finalRoundActive: false,
     finalTurnCount: 0,
     initialSelectionMode: true,
-    lastActivity: Date.now(),
-    countdownStart: null,
-    countdownDuration: 12,
-    gameStarted: false
+    lastActivity: Date.now()
   };
   createDeck(roomId);
   return roomId;
@@ -178,13 +175,6 @@ app.post("/join", (req, res) => {
     if (player_id) {
       const existing = room.players.find(p => p.id === player_id);
       if (existing) {
-        let countdown = 0;
-        if (room.countdownStart && !room.gameStarted) {
-          countdown = Math.max(0, room.countdownDuration - Math.floor((Date.now() - room.countdownStart) / 1000));
-          if (countdown === 0) {
-            room.gameStarted = true;
-          }
-        }
         return res.json({
           status: "ok",
           room_id: room_id,
@@ -193,9 +183,7 @@ app.post("/join", (req, res) => {
           hand: existing.hand,
           center_card: getCenterCard(room_id),
           current_turn_index: room.currentTurnIndex,
-          total_players: room.players.length,
-          countdown,
-          game_started: room.gameStarted
+          total_players: room.players.length
         });
       }
     }
@@ -227,15 +215,8 @@ app.post("/join", (req, res) => {
     }
 
     if (room.players.length === 1) {
-      room.countdownStart = Date.now();
-      room.gameStarted = false;
-    }
-    let countdown = 0;
-    if (room.countdownStart && !room.gameStarted) {
-      countdown = Math.max(0, room.countdownDuration - Math.floor((Date.now() - room.countdownStart) / 1000));
-      if (countdown === 0) {
-        room.gameStarted = true;
-      }
+      room.initialSelectionMode = true;
+      console.log(`Room ${room_id} is full, entering initial selection mode.`);
     }
 
     res.json({
@@ -247,9 +228,7 @@ app.post("/join", (req, res) => {
       center_card: getCenterCard(room_id),
       current_turn_index: room.currentTurnIndex,
       total_players: room.players.length,
-      initial_selection_mode: room.initialSelectionMode,
-      countdown,
-      game_started: room.gameStarted
+      initial_selection_mode: room.initialSelectionMode
     });
 
   } catch (error) {
@@ -589,14 +568,6 @@ app.get("/state", (req, res) => {
 
     const room = rooms[room_id];
     
-    let countdown = 0;
-    if (room.countdownStart && !room.gameStarted) {
-      countdown = Math.max(0, room.countdownDuration - Math.floor((Date.now() - room.countdownStart) / 1000));
-      if (countdown === 0) {
-        room.gameStarted = true;
-      }
-    }
-
     res.json({
       center_card: room.centerCard,
       current_turn_index: room.currentTurnIndex,
@@ -611,9 +582,7 @@ app.get("/state", (req, res) => {
       reaction_value: room.reactionValue,
       queens_triggered: room.queensTriggered,
       final_round_active: room.finalRoundActive,
-      initial_selection_mode: room.initialSelectionMode,
-      countdown,
-      game_started: room.gameStarted
+      initial_selection_mode: room.initialSelectionMode
     });
     console.log("State sent to client for room", room_id, "- center card:", room.centerCard, "turn index:", room.currentTurnIndex);
   } catch (error) {
