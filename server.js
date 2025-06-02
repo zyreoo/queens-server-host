@@ -197,7 +197,8 @@ app.post("/join", (req, res) => {
           hand: existing.hand,
           center_card: getCenterCard(room_id),
           current_turn_index: room.currentTurnIndex,
-          total_players: room.players.length
+          total_players: room.players.length,
+          initial_selection_mode: room.initialSelectionMode
         });
       } else {
         console.log("/join: No matching player found for player_id.");
