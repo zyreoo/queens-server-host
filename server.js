@@ -182,10 +182,13 @@ app.post("/join", (req, res) => {
     }
 
     const room = rooms[room_id];
+    console.log("/join: incoming player_id=", player_id);
+    console.log("/join: room players=", room.players.map(p => p.id));
     
     if (player_id) {
       const existing = room.players.find(p => p.id === player_id);
       if (existing) {
+        console.log("/join: Found existing player! Returning hand and index.");
         return res.json({
           status: "ok",
           room_id: room_id,
@@ -196,6 +199,8 @@ app.post("/join", (req, res) => {
           current_turn_index: room.currentTurnIndex,
           total_players: room.players.length
         });
+      } else {
+        console.log("/join: No matching player found for player_id.");
       }
     }
 
