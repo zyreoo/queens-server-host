@@ -144,11 +144,22 @@ function calculateFinalScore(roomId) {
 
 app.post("/create_room", (req, res) => {
   try {
+    const playerID = uuidv4();
     const roomId = createRoom();
     rooms[roomId].lastActivity = Date.now();
+    const newPlayer = {
+      id: playerID,
+      hand: drawHand(roomId),
+      index: 0,
+      lastSeen: Date.now(),
+      score: 0,
+      initialSelectionComplete: false
+    };
+    rooms[roomId].players.push(newPlayer);
     res.json({
       status: "ok",
-      room_id: roomId
+      room_id: roomId,
+      player_id: playerID
     });
   } catch (error) {
     console.error('Error creating room:', error);
