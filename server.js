@@ -29,7 +29,10 @@ function createRoom() {
     finalRoundActive: false,
     finalTurnCount: 0,
     initialSelectionMode: true,
-    lastActivity: Date.now()
+    lastActivity: Date.now(),
+    countdownStart: null,
+    countdownDuration: 12,
+    gameStarted: false
   };
   createDeck(roomId);
   return roomId;
@@ -214,6 +217,18 @@ app.post("/join", (req, res) => {
       console.log(`Room ${room_id} is full, entering initial selection mode.`);
     }
 
+    if (room.players.length === 1) {
+      room.countdownStart = Date.now();
+      room.gameStarted = false;
+    }
+    let countdown = 0;
+    if (room.countdownStart && !room.gameStarted) {
+      countdown = Math.max(0, room.countdownDuration - Math.floor((Date.now() - room.countdownStart) / 1000));
+      if (countdown === 0) {
+        room.gameStarted = true;
+      }
+    }
+
     res.json({
       status: 'ok',
       room_id: room_id,
@@ -223,7 +238,9 @@ app.post("/join", (req, res) => {
       center_card: getCenterCard(room_id),
       current_turn_index: room.currentTurnIndex,
       total_players: room.players.length,
-      initial_selection_mode: room.initialSelectionMode
+      initial_selection_mode: room.initialSelectionMode,
+      countdown,
+      game_started: room.gameStarted
     });
 
   } catch (error) {
@@ -269,25 +286,6 @@ app.post("/play_card", (req, res) => {
       return res.status(400).json({ status: "error", message: "Card not in hand" });
     }
 
-    if (room.reactionMode && player.hand[cardIndex].value !== room.reactionValue) {
-      if (!room.reactingPlayers.includes(player_index)) {
-        room.reactingPlayers.push(player_index);
-        if (room.deck.length > 0) {
-            const penaltyCard = room.deck.pop();
-            player.hand.push(penaltyCard);
-            console.log(`Player ${player_index} received a penalty card.`);
-        }
-        return res.json({
-          status: "ok",
-          hand: player.hand,
-          message: "Invalid card, penalty card added",
-          center_card: room.centerCard,
-          current_turn_index: room.currentTurnIndex,
-          total_players: room.players.length
-        });
-      }
-    }
-
     const playedCardData = { ...player.hand[cardIndex] };
 
     player.hand.splice(cardIndex, 1);
@@ -302,6 +300,56 @@ app.post("/play_card", (req, res) => {
       total_players: room.players.length,
     };
 
+    // Check if the player is in reaction mode and played a non-matching card
+    if (room.reactionMode && playedCardData.value !== room.reactionValue) {
+      // If this is the first time this player failed to react in this reaction mode
+      if (!room.reactingPlayers.includes(player_index)) {
+        room.reactingPlayers.push(player_index);
+        if (room.deck.length > 0) {
+            const penaltyCard = room.deck.pop();
+            player.hand.push(penaltyCard);
+            console.log(`Player ${player_index} received a penalty card for failing to react.`);
+
+            // End reaction mode and pass the turn
+            room.reactionMode = false;
+            // The nextTurn call will happen after this block, which should now be correct.
+            // response.current_turn_index will be set correctly by nextTurn result
+
+            return res.json({
+              status: "ok",
+              hand: player.hand,
+              message: `Failed to react to ${room.reactionValue}, penalty card added.`,
+              center_card: room.centerCard, // Keep the card that initiated reaction
+              current_turn_index: (room.currentTurnIndex + 1) % room.players.length, // Indicate next turn
+              reaction_mode: false, // Explicitly state reaction mode is off
+              total_players: room.players.length
+            });
+        } else {
+             // Handle case where there are no penalty cards left - maybe just end reaction and pass turn?
+             room.reactionMode = false;
+             // nextTurn(room_id); // nextTurn will be called later
+             return res.json({
+                status: "ok",
+                hand: player.hand,
+                message: `Failed to react to ${room.reactionValue}, no penalty cards left.`,
+                center_card: room.centerCard,
+                current_turn_index: (room.currentTurnIndex + 1) % room.players.length,
+                reaction_mode: false,
+                total_players: room.players.length
+            });
+        }
+      } else {
+         // Player already failed reaction this turn, maybe a different message or action?
+         // For now, let's just return an informative message without another penalty
+          return res.status(400).json({ 
+              status: "error", 
+              message: `Already failed to react this turn. Play a ${room.reactionValue} or wait for turn to pass.` 
+          });
+      }
+    }
+
+    // If we are here, either not in reaction mode OR played a matching card in reaction mode, OR playing a special card that bypasses reaction check
+    // Check for special cards (King, Jack, Queen)
     if (playedCardData.rank === "13") {
       response.center_card = playedCardData;
       response.king_reveal_mode = true;
@@ -532,6 +580,14 @@ app.get("/state", (req, res) => {
 
     const room = rooms[room_id];
     
+    let countdown = 0;
+    if (room.countdownStart && !room.gameStarted) {
+      countdown = Math.max(0, room.countdownDuration - Math.floor((Date.now() - room.countdownStart) / 1000));
+      if (countdown === 0) {
+        room.gameStarted = true;
+      }
+    }
+
     res.json({
       center_card: room.centerCard,
       current_turn_index: room.currentTurnIndex,
@@ -546,7 +602,9 @@ app.get("/state", (req, res) => {
       reaction_value: room.reactionValue,
       queens_triggered: room.queensTriggered,
       final_round_active: room.finalRoundActive,
-      initial_selection_mode: room.initialSelectionMode
+      initial_selection_mode: room.initialSelectionMode,
+      countdown,
+      game_started: room.gameStarted
     });
     console.log("State sent to client for room", room_id, "- center card:", room.centerCard, "turn index:", room.currentTurnIndex);
   } catch (error) {
