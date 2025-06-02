@@ -209,14 +209,10 @@ app.post("/join", (req, res) => {
     room.lastActivity = Date.now();
     console.log(`player ${newPlayer.index} joined room ${room_id}, total players: ${room.players.length}`);
 
+    // Start initial selection mode when second player joins
     if (room.players.length === MAX_PLAYERS) {
       room.initialSelectionMode = true;
-      console.log(`Room ${room_id} is full, entering initial selection mode.`);
-    }
-
-    if (room.players.length === 1) {
-      room.initialSelectionMode = true;
-      console.log(`Room ${room_id} is full, entering initial selection mode.`);
+      console.log(`Room ${room_id} is full, starting initial selection mode.`);
     }
 
     res.json({
