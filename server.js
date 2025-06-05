@@ -437,7 +437,7 @@ app.post("/select_initial_cards", (req, res) => {
 
 app.get("/state", (req, res) => {
   try {
-    const { room_id } = req.query;
+    const { room_id, player_id } = req.query;
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -459,7 +459,10 @@ app.get("/state", (req, res) => {
         p.hand = [];
       }
 
-      if (req.query.player_id === p.id) {
+      // Check if this is the requesting player
+      const isRequestingPlayer = player_id && p.id === player_id;
+
+      if (isRequestingPlayer) {
         playerData.hand = p.hand.map(card => ({
           ...card,
           card_id: card.card_id || `missing_${Date.now()}`,
@@ -496,7 +499,8 @@ app.get("/state", (req, res) => {
   } catch (error) {
     res.status(500).json({
       status: 'error',
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error.message
     });
   }
 });
