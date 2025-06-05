@@ -144,22 +144,11 @@ function calculateFinalScore(roomId) {
 
 app.post("/create_room", (req, res) => {
   try {
-    const playerID = uuidv4();
     const roomId = createRoom();
     rooms[roomId].lastActivity = Date.now();
-    const newPlayer = {
-      id: playerID,
-      hand: drawHand(roomId),
-      index: 0,
-      lastSeen: Date.now(),
-      score: 0,
-      initialSelectionComplete: false
-    };
-    rooms[roomId].players.push(newPlayer);
     res.json({
       status: "ok",
-      room_id: roomId,
-      player_id: playerID
+      room_id: roomId
     });
   } catch (error) {
     console.error('Error creating room:', error);
@@ -173,6 +162,7 @@ app.post("/create_room", (req, res) => {
 app.post("/join", (req, res) => {
   try {
     const { room_id, player_id } = req.body;
+    console.log("JOIN REQUEST:", req.body);
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -182,14 +172,11 @@ app.post("/join", (req, res) => {
     }
 
     const room = rooms[room_id];
-    console.log("/join: incoming player_id=", player_id);
-    console.log("/join: room players=", room.players.map(p => p.id));
     
     if (player_id) {
       const existing = room.players.find(p => p.id === player_id);
       if (existing) {
-        console.log("/join: Found existing player! Returning hand and index.");
-        return res.json({
+        const rejoinData = {
           status: "ok",
           room_id: room_id,
           player_id: existing.id,
@@ -199,9 +186,10 @@ app.post("/join", (req, res) => {
           current_turn_index: room.currentTurnIndex,
           total_players: room.players.length,
           initial_selection_mode: room.initialSelectionMode
-        });
-      } else {
-        console.log("/join: No matching player found for player_id.");
+        };
+        console.log(`Existing player ${player_id} rejoining room ${room_id}`);
+        console.log("Sending rejoin data:", rejoinData);
+        return res.json(rejoinData);
       }
     }
 
@@ -224,12 +212,12 @@ app.post("/join", (req, res) => {
 
     room.players.push(newPlayer);
     room.lastActivity = Date.now();
-    console.log(`player ${newPlayer.index} joined room ${room_id}, total players: ${room.players.length}`);
+    console.log(`New player joined:`, newPlayer);
+    console.log(`initialSelectionMode is now:`, room.initialSelectionMode);
 
-    // Start initial selection mode when second player joins
     if (room.players.length === MAX_PLAYERS) {
       room.initialSelectionMode = true;
-      console.log(`Room ${room_id} is full, starting initial selection mode.`);
+      console.log(`Room ${room_id} is full, entering initial selection mode.`);
     }
 
     res.json({
@@ -255,7 +243,7 @@ app.post("/join", (req, res) => {
 
 app.post("/play_card", (req, res) => {
   try {
-    const { room_id, player_index, card_id } = req.body;
+    const { room_id, player_index, card } = req.body;
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -282,12 +270,31 @@ app.post("/play_card", (req, res) => {
       });
     }
 
-    const cardIndex = player.hand.findIndex(c => c.card_id === card_id);
+    const cardIndex = player.hand.findIndex(c => c.card_id === card.card_id);
     if (cardIndex === -1) {
       return res.status(400).json({ status: "error", message: "Card not in hand" });
     }
 
-    const playedCardData = { ...player.hand[cardIndex] };
+    if (room.reactionMode && card.value !== room.reactionValue) {
+      if (!room.reactingPlayers.includes(player_index)) {
+        room.reactingPlayers.push(player_index);
+        if (room.deck.length > 0) {
+            const penaltyCard = room.deck.pop();
+            player.hand.push(penaltyCard);
+            console.log(`Player ${player_index} received a penalty card.`);
+        }
+        return res.json({
+          status: "ok",
+          hand: player.hand,
+          message: "Invalid card, penalty card added",
+          center_card: room.centerCard,
+          current_turn_index: room.currentTurnIndex,
+          total_players: room.players.length
+        });
+      }
+    }
+
+    const playedCardData = { ...card };
 
     player.hand.splice(cardIndex, 1);
     
@@ -301,56 +308,6 @@ app.post("/play_card", (req, res) => {
       total_players: room.players.length,
     };
 
-    // Check if the player is in reaction mode and played a non-matching card
-    if (room.reactionMode && playedCardData.value !== room.reactionValue) {
-      // If this is the first time this player failed to react in this reaction mode
-      if (!room.reactingPlayers.includes(player_index)) {
-        room.reactingPlayers.push(player_index);
-        if (room.deck.length > 0) {
-            const penaltyCard = room.deck.pop();
-            player.hand.push(penaltyCard);
-            console.log(`Player ${player_index} received a penalty card for failing to react.`);
-
-            // End reaction mode and pass the turn
-            room.reactionMode = false;
-            // The nextTurn call will happen after this block, which should now be correct.
-            // response.current_turn_index will be set correctly by nextTurn result
-
-            return res.json({
-              status: "ok",
-              hand: player.hand,
-              message: `Failed to react to ${room.reactionValue}, penalty card added.`,
-              center_card: room.centerCard, // Keep the card that initiated reaction
-              current_turn_index: (room.currentTurnIndex + 1) % room.players.length, // Indicate next turn
-              reaction_mode: false, // Explicitly state reaction mode is off
-              total_players: room.players.length
-            });
-        } else {
-             // Handle case where there are no penalty cards left - maybe just end reaction and pass turn?
-             room.reactionMode = false;
-             // nextTurn(room_id); // nextTurn will be called later
-             return res.json({
-                status: "ok",
-                hand: player.hand,
-                message: `Failed to react to ${room.reactionValue}, no penalty cards left.`,
-                center_card: room.centerCard,
-                current_turn_index: (room.currentTurnIndex + 1) % room.players.length,
-                reaction_mode: false,
-                total_players: room.players.length
-            });
-        }
-      } else {
-         // Player already failed reaction this turn, maybe a different message or action?
-         // For now, let's just return an informative message without another penalty
-          return res.status(400).json({ 
-              status: "error", 
-              message: `Already failed to react this turn. Play a ${room.reactionValue} or wait for turn to pass.` 
-          });
-      }
-    }
-
-    // If we are here, either not in reaction mode OR played a matching card in reaction mode, OR playing a special card that bypasses reaction check
-    // Check for special cards (King, Jack, Queen)
     if (playedCardData.rank === "13") {
       response.center_card = playedCardData;
       response.king_reveal_mode = true;
@@ -362,9 +319,6 @@ app.post("/play_card", (req, res) => {
       response.jack_player_index = player_index;
       response.message = "Jack played! Select a card to swap.";
       response.hand = player.hand;
-      room.jackSwapMode = true;
-      room.jackPlayerIndex = player_index;
-      room.centerCard = playedCardData;
       return res.json(response);
     } else if (playedCardData.rank === "12") {
       const nextPlayerIndex = (player_index + 1) % room.players.length;
@@ -510,13 +464,8 @@ app.post("/select_initial_cards", (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Must select exactly 2 cards.' });
     }
 
-    player.hand.forEach(card => {
-      if (selected_card_ids.includes(card.card_id)) {
-        card.is_face_up = true;
-        card.permanent_face_up = true;
-      }
-    });
-
+    // Store selected cards but don't mark them as face up
+    player.selectedCardIds = selected_card_ids;
     player.initialSelectionComplete = true;
     console.log(`Player ${player_index} in room ${room_id} completed initial selection.`);
 
@@ -525,6 +474,7 @@ app.post("/select_initial_cards", (req, res) => {
     if (allSelected) {
       room.initialSelectionMode = false;
 
+      // Deal additional cards if needed
       room.players.forEach(p => {
         while (p.hand.length < 4) {
           if (room.deck.length > 0) {
@@ -536,29 +486,31 @@ app.post("/select_initial_cards", (req, res) => {
         }
       });
 
-      getCenterCard(room_id);
+      // Set center card and start game
+      getCenterCard(room_id); 
       console.log(`All players in room ${room_id} completed initial selection. Starting game.`);
 
-      room.currentTurnIndex = 0;
+      // Set initial turn
+      if (room.players.length > 0) {
+        room.currentTurnIndex = 0;
+      }
 
-      res.json({
-        status: 'ok',
+      res.json({ 
+        status: 'ok', 
         message: 'Initial selection complete. Game starting.',
+        game_started: true,
+        all_players_ready: true,
         initial_selection_mode: false,
         current_turn_index: room.currentTurnIndex,
-        players: room.players.map(p => ({
-          index: p.index,
-          hand: p.hand
-        }))
+        center_card: room.centerCard
       });
     } else {
-      res.json({
-        status: 'ok',
+      res.json({ 
+        status: 'ok', 
         message: 'Selection received. Waiting for other players.',
-        players: room.players.map(p => ({
-          index: p.index,
-          hand: p.hand
-        }))
+        game_started: false,
+        all_players_ready: false,
+        initial_selection_mode: true
       });
     }
 
@@ -571,6 +523,7 @@ app.post("/select_initial_cards", (req, res) => {
 app.get("/state", (req, res) => {
   try {
     const { room_id } = req.query;
+    console.log("State request received for room:", room_id, "from player:", req.query.player_id);
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -581,23 +534,50 @@ app.get("/state", (req, res) => {
 
     const room = rooms[room_id];
     
-    res.json({
+    // Map player data, including hands
+    const players = room.players.map(p => {
+      const playerData = {
+        index: p.index,
+        hand_size: p.hand.length,
+        initialSelectionComplete: p.initialSelectionComplete
+      };
+
+      // For the requesting player, send their full hand
+      if (req.query.player_id === p.id) {
+        console.log("Sending full hand to player", p.index);
+        playerData.hand = p.hand;
+      } else {
+        // For other players, send minimal card info (just card_id and face down state)
+        console.log("Sending minimal card info for player", p.index);
+        playerData.hand = p.hand.map(card => ({
+          card_id: card.card_id,
+          is_face_up: false
+        }));
+      }
+
+      return playerData;
+    });
+
+    const stateData = {
       center_card: room.centerCard,
       current_turn_index: room.currentTurnIndex,
       deck_count: room.deck.length,
       total_players: room.players.length,
-      players: room.players.map(p => ({ 
-        index: p.index, 
-        hand_size: p.hand.length,
-        hand: p.hand
-      })),
+      players: players,
       reaction_mode: room.reactionMode,
       reaction_value: room.reactionValue,
       queens_triggered: room.queensTriggered,
       final_round_active: room.finalRoundActive,
       initial_selection_mode: room.initialSelectionMode
+    };
+
+    console.log("Sending state update:", {
+      ...stateData,
+      players: players.map(p => ({ ...p, hand: p.hand ? p.hand.length : 0 }))  // Log hand sizes only
     });
-    console.log("State sent to client for room", room_id, "- center card:", room.centerCard, "turn index:", room.currentTurnIndex);
+
+    res.json(stateData);
+
   } catch (error) {
     console.error('Error in state:', error);
     res.status(500).json({
@@ -626,15 +606,16 @@ app.post("/reset", (req, res) => {
 
 app.get("/rooms", (req, res) => {
   try {
-    const roomList = Object.entries(rooms).map(([id, room]) => ({
-      room_id: id,
-      player_count: room.players.length,
-      max_players: MAX_PLAYERS
+    const activeRooms = Object.entries(rooms).map(([id, room]) => ({
+      id,
+      players: room.players.length,
+      max_players: MAX_PLAYERS,
+      is_full: room.players.length >= MAX_PLAYERS
     }));
     
     res.json({
-      status: 'ok',
-      rooms: roomList
+      status: "ok",
+      rooms: activeRooms
     });
   } catch (error) {
     console.error('Error listing rooms:', error);
