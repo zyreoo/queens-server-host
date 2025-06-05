@@ -66,18 +66,23 @@ function resetGame(roomId) {
   room.queensPlayerIndex = null;
   room.finalRoundActive = false;
   room.finalTurnCount = 0;
-  console.log("game state reset for room:", roomId);
 }
 
 function drawHand(roomId) {
-  return rooms[roomId].deck.splice(0, 4);
+  const room = rooms[roomId];
+  const hand = [];
+  for (let i = 0; i < 4; i++) {
+    if (room.deck.length > 0) {
+      hand.push(room.deck.pop());
+    }
+  }
+  return hand;
 }
 
 function getCenterCard(roomId) {
   const room = rooms[roomId];
   if (!room.centerCard && room.deck.length > 0) {
     room.centerCard = room.deck.pop();
-    console.log("Center card set to:", room.centerCard);
   }
   return room.centerCard;
 }
@@ -87,59 +92,32 @@ function nextTurn(roomId) {
   if (room.finalRoundActive) {
     room.finalTurnCount++;
     if (room.finalTurnCount >= room.players.length) {
-      const result = calculateFinalScore(roomId);
-      return { game_over: true, ...result };
+      return calculateWinner(roomId);
     }
   }
-  const nextPlayerIndex = (room.currentTurnIndex + 1) % room.players.length;
-  const nextPlayer = room.players[nextPlayerIndex];
-  
-  if (!room.finalRoundActive || nextPlayerIndex !== room.queensPlayerIndex) {
-    if (room.deck.length > 0) {
-      const drawnCard = room.deck.pop();
-      nextPlayer.hand.push(drawnCard);
-    }
-  }
-
-  room.currentTurnIndex = nextPlayerIndex;
-  console.log(`Turn changed to player ${room.currentTurnIndex} in room ${roomId}`);
-  
-  if (room.finalRoundActive && room.currentTurnIndex === room.queensPlayerIndex) {
-      const result = calculateFinalScore(roomId);
-      return { game_over: true, ...result };
-  }
-
+  room.currentTurnIndex = (room.currentTurnIndex + 1) % room.players.length;
   return { game_over: false };
 }
 
-function calculateFinalScore(roomId) {
+function calculateWinner(roomId) {
   const room = rooms[roomId];
-  let scores = [];
-  let totalOtherScores = 0;
-  let lowestScore = Infinity;
-  let queensScore = 0;
+  let lowestValue = Infinity;
+  let winnerIndex = -1;
 
-  room.players.forEach((player, i) => {
-    let handScore = 0;
+  room.players.forEach((player, index) => {
     player.hand.forEach(card => {
-      if (card.rank === "12") handScore += 0;
-      else if (card.rank === "1") handScore += 1;
-      else if (["11", "13"].includes(card.rank)) handScore += 10;
-      else handScore += parseInt(card.rank);
+      if (card.value < lowestValue) {
+        lowestValue = card.value;
+        winnerIndex = index;
+      }
     });
-    scores.push(handScore);
-    if (i === room.queensPlayerIndex) queensScore = handScore;
-    else totalOtherScores += handScore;
-    if (handScore < lowestScore) lowestScore = handScore;
   });
 
-  if (queensScore === lowestScore) {
-    return { winner: room.queensPlayerIndex, message: `player ${room.queensPlayerIndex + 1} wins!` };
-  } else {
-    room.players[room.queensPlayerIndex].score = totalOtherScores;
-    room.players.forEach((p, i) => { if (i !== room.queensPlayerIndex) p.score = 0; });
-    return { winner: null, message: `player ${room.queensPlayerIndex + 1} called queens but didn't have the lowest score. They get ${totalOtherScores} points.` };
-  }
+  return {
+    game_over: true,
+    winner_index: winnerIndex,
+    message: `Game Over! Player ${winnerIndex} wins!`
+  };
 }
 
 app.post("/create_room", (req, res) => {
@@ -151,7 +129,6 @@ app.post("/create_room", (req, res) => {
       room_id: roomId
     });
   } catch (error) {
-    console.error('Error creating room:', error);
     res.status(500).json({
       status: 'error',
       message: error.message
@@ -162,7 +139,6 @@ app.post("/create_room", (req, res) => {
 app.post("/join", (req, res) => {
   try {
     const { room_id, player_id } = req.body;
-    console.log("JOIN REQUEST:", req.body);
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -172,6 +148,8 @@ app.post("/join", (req, res) => {
     }
 
     const room = rooms[room_id];
+    
+    const isRoomCreator = room.players.length === 0;
     
     if (player_id) {
       const existing = room.players.find(p => p.id === player_id);
@@ -187,8 +165,6 @@ app.post("/join", (req, res) => {
           total_players: room.players.length,
           initial_selection_mode: room.initialSelectionMode
         };
-        console.log(`Existing player ${player_id} rejoining room ${room_id}`);
-        console.log("Sending rejoin data:", rejoinData);
         return res.json(rejoinData);
       }
     }
@@ -200,11 +176,11 @@ app.post("/join", (req, res) => {
       });
     }
 
-    const playerID = uuidv4(); 
+    const playerID = player_id || uuidv4(); 
     const newPlayer = {
       id: playerID,
       hand: drawHand(room_id), 
-      index: room.players.length,
+      index: isRoomCreator ? 0 : room.players.length,
       lastSeen: Date.now(),
       score: 0,
       initialSelectionComplete: false
@@ -212,12 +188,10 @@ app.post("/join", (req, res) => {
 
     room.players.push(newPlayer);
     room.lastActivity = Date.now();
-    console.log(`New player joined:`, newPlayer);
-    console.log(`initialSelectionMode is now:`, room.initialSelectionMode);
 
     if (room.players.length === MAX_PLAYERS) {
       room.initialSelectionMode = true;
-      console.log(`Room ${room_id} is full, entering initial selection mode.`);
+      room.lastActivity = Date.now();
     }
 
     res.json({
@@ -229,11 +203,11 @@ app.post("/join", (req, res) => {
       center_card: getCenterCard(room_id),
       current_turn_index: room.currentTurnIndex,
       total_players: room.players.length,
-      initial_selection_mode: room.initialSelectionMode
+      initial_selection_mode: room.initialSelectionMode,
+      room_full: room.players.length === MAX_PLAYERS
     });
 
   } catch (error) {
-    console.error('Error in join:', error);
     res.status(500).json({
       status: 'error',
       message: error.message
@@ -281,7 +255,6 @@ app.post("/play_card", (req, res) => {
         if (room.deck.length > 0) {
             const penaltyCard = room.deck.pop();
             player.hand.push(penaltyCard);
-            console.log(`Player ${player_index} received a penalty card.`);
         }
         return res.json({
           status: "ok",
@@ -347,59 +320,10 @@ app.post("/play_card", (req, res) => {
     res.json(response);
 
   } catch (error) {
-    console.error('Error in play_card:', error);
     res.status(500).json({
       status: 'error',
       message: error.message
     });
-  }
-});
-
-app.post("/jack_swap", (req, res) => {
-  try {
-    const { room_id, player_index, from_card_id, to_card_id } = req.body;
-    
-    if (!rooms[room_id]) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Room not found'
-      });
-    }
-
-    const room = rooms[room_id];
-
-    if (player_index !== room.currentTurnIndex) {
-      return res.status(403).json({ status: "error", message: "Not your turn" });
-    }
-    
-    if (room.finalRoundActive && player_index === room.queensPlayerIndex) {
-        return res.status(400).json({ status: "error", message: "Cannot swap cards after calling Queens." });
-    }
-
-    const player = room.players[player_index];
-    const opponent = room.players.find(p => p.index !== player_index);
-    const fromCardIndex = player.hand.findIndex(c => c.card_id === from_card_id);
-    const toCardIndex = opponent.hand.findIndex(c => c.card_id === to_card_id);
-
-    if (fromCardIndex === -1 || toCardIndex === -1) {
-      return res.status(400).json({ status: "error", message: "Invalid card selection" });
-    }
-
-    const temp = player.hand[fromCardIndex];
-    player.hand[fromCardIndex] = opponent.hand[toCardIndex];
-    opponent.hand[toCardIndex] = temp;
-
-    nextTurn(room_id);
-    res.json({
-      status: "ok",
-      center_card: room.centerCard,
-      current_turn_index: room.currentTurnIndex,
-      player_hand: player.hand,
-      opponent_hand_size: opponent.hand.length
-    });
-  } catch (error) {
-    console.error("Error in jack_swap:", error);
-    res.status(500).json({ status: "error", message: "Internal server error" });
   }
 });
 
@@ -436,7 +360,6 @@ app.post("/call_queens", (req, res) => {
       final_round_active: room.finalRoundActive
     });
   } catch (error) {
-    console.error("Error in call_queens:", error);
     res.status(500).json({ status: "error", message: "Internal server error" });
   }
 });
@@ -464,33 +387,26 @@ app.post("/select_initial_cards", (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Must select exactly 2 cards.' });
     }
 
-    // Store selected cards but don't mark them as face up
     player.selectedCardIds = selected_card_ids;
     player.initialSelectionComplete = true;
-    console.log(`Player ${player_index} in room ${room_id} completed initial selection.`);
 
     const allSelected = room.players.every(p => p.initialSelectionComplete);
 
     if (allSelected) {
       room.initialSelectionMode = false;
 
-      // Deal additional cards if needed
       room.players.forEach(p => {
         while (p.hand.length < 4) {
           if (room.deck.length > 0) {
             p.hand.push(room.deck.pop());
           } else {
-            console.warn("Deck is empty, cannot deal full initial hands.");
             break;
           }
         }
       });
 
-      // Set center card and start game
       getCenterCard(room_id); 
-      console.log(`All players in room ${room_id} completed initial selection. Starting game.`);
 
-      // Set initial turn
       if (room.players.length > 0) {
         room.currentTurnIndex = 0;
       }
@@ -515,7 +431,6 @@ app.post("/select_initial_cards", (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error in select_initial_cards:', error);
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
@@ -523,7 +438,6 @@ app.post("/select_initial_cards", (req, res) => {
 app.get("/state", (req, res) => {
   try {
     const { room_id } = req.query;
-    console.log("State request received for room:", room_id, "from player:", req.query.player_id);
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -534,23 +448,29 @@ app.get("/state", (req, res) => {
 
     const room = rooms[room_id];
     
-    // Map player data, including hands
     const players = room.players.map(p => {
       const playerData = {
         index: p.index,
-        hand_size: p.hand.length,
-        initialSelectionComplete: p.initialSelectionComplete
+        hand_size: p.hand ? p.hand.length : 0,
+        initialSelectionComplete: p.initialSelectionComplete || false
       };
 
-      // For the requesting player, send their full hand
+      if (!p.hand || !Array.isArray(p.hand)) {
+        p.hand = [];
+      }
+
       if (req.query.player_id === p.id) {
-        console.log("Sending full hand to player", p.index);
-        playerData.hand = p.hand;
-      } else {
-        // For other players, send minimal card info (just card_id and face down state)
-        console.log("Sending minimal card info for player", p.index);
         playerData.hand = p.hand.map(card => ({
-          card_id: card.card_id,
+          ...card,
+          card_id: card.card_id || `missing_${Date.now()}`,
+          suit: card.suit || "Unknown",
+          rank: card.rank || "Unknown",
+          value: card.value || 0,
+          is_face_up: card.is_face_up || false
+        }));
+      } else {
+        playerData.hand = p.hand.map(card => ({
+          card_id: card.card_id || `hidden_${Date.now()}`,
           is_face_up: false
         }));
       }
@@ -571,15 +491,9 @@ app.get("/state", (req, res) => {
       initial_selection_mode: room.initialSelectionMode
     };
 
-    console.log("Sending state update:", {
-      ...stateData,
-      players: players.map(p => ({ ...p, hand: p.hand ? p.hand.length : 0 }))  // Log hand sizes only
-    });
-
     res.json(stateData);
 
   } catch (error) {
-    console.error('Error in state:', error);
     res.status(500).json({
       status: 'error',
       message: 'Internal server error'
@@ -618,77 +532,10 @@ app.get("/rooms", (req, res) => {
       rooms: activeRooms
     });
   } catch (error) {
-    console.error('Error listing rooms:', error);
     res.status(500).json({
       status: 'error',
       message: error.message
     });
-  }
-});
-
-app.post('/king_reveal', (req, res) => {
-  try {
-    const { room_id, player_index, revealed_card_id } = req.body;
-    console.log(`Received /king_reveal request for room ${room_id}, player ${player_index}, card ${revealed_card_id}`);
-
-    const room = rooms[room_id];
-    if (!room) {
-      return res.status(404).json({ status: 'error', message: 'Room not found.' });
-    }
-
-    const player = room.players[player_index];
-    if (!player) {
-       return res.status(404).json({ status: 'error', message: 'Player not found.' });
-    }
-
-    let cardFound = false;
-    for (const card of player.hand) {
-      if (card.card_id === revealed_card_id) {
-        card.is_face_up = true;
-        cardFound = true;
-        console.log(`Server: Revealed card ${revealed_card_id} for player ${player_index}`);
-        break;
-      }
-    }
-
-    if (!cardFound) {
-      return res.status(404).json({ status: 'error', message: 'Revealed card not found in player' });
-    }
-
-    room.king_reveal_mode = false;
-    room.king_player_index = -1;
-
-    const playersData = room.players.map(p => ({
-        index: p.index,
-        hand_size: p.hand.length,
-        hand: p.hand.map(card => ({
-            ...card,
-            is_face_up: card.is_face_up
-        })),
-    }));
-
-    const response = {
-      status: "ok",
-      center_card: room.centerCard,
-      current_turn_index: room.currentTurnIndex,
-      total_players: room.players.length,
-      players: playersData,
-      king_reveal_mode: room.king_reveal_mode,
-      king_player_index: room.king_player_index,
-      message: `Player ${player_index + 1} revealed a card.`,
-      reaction_mode: room.reactionMode,
-      reaction_value: room.reactionValue,
-      jack_swap_mode: room.jack_swap_mode,
-      jack_player_index: room.jack_player_index,
-      queens_triggered: room.queensTriggered,
-      final_round_active: room.finalRoundActive,
-    };
-
-    res.json(response);
-
-  } catch (error) {
-    console.error('Error in king_reveal:', error);
-    res.status(500).json({ status: 'error', message: 'Internal server error.' });
   }
 });
 
@@ -698,18 +545,13 @@ function checkInactiveRooms() {
   for (const roomId in rooms) {
     const room = rooms[roomId];
     if (now - room.lastActivity > inactivityTimeout) {
-      console.log(`Room ${roomId} is inactive, ending game and closing room.`);
       const winningPlayerIndex = (room.currentTurnIndex + 1) % room.players.length;
-      const winnerMessage = `Game ended due to inactivity. Player ${winningPlayerIndex + 1} wins.`;
-      
       delete rooms[roomId];
-      console.log(`Room ${roomId} closed.`);
     }
   }
 }
+
 setInterval(checkInactiveRooms, 30 * 1000);
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-}); 
+const port = process.env.PORT || 3000;
+app.listen(port, () => {}); 
