@@ -387,6 +387,15 @@ app.post("/select_initial_cards", (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Must select exactly 2 cards.' });
     }
 
+    // Verify the cards exist in player's hand
+    const validCards = selected_card_ids.every(card_id => 
+      player.hand.some(card => card.card_id === card_id)
+    );
+
+    if (!validCards) {
+      return res.status(400).json({ status: 'error', message: 'Invalid cards selected.' });
+    }
+
     player.selectedCardIds = selected_card_ids;
     player.initialSelectionComplete = true;
 
