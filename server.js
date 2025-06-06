@@ -148,12 +148,12 @@ app.post("/join", (req, res) => {
     }
 
     const room = rooms[room_id];
-    
     const isRoomCreator = room.players.length === 0;
     
     if (player_id) {
       const existing = room.players.find(p => p.id === player_id);
       if (existing) {
+        console.log(`[REJOIN] Player 0 hand has ${existing.index === 0 ? existing.hand.length : 'N/A'} cards`);
         const rejoinData = {
           status: "ok",
           room_id: room_id,
@@ -177,20 +177,26 @@ app.post("/join", (req, res) => {
     }
 
     const playerID = player_id || uuidv4(); 
+    const newHand = drawHand(room_id);
     const newPlayer = {
       id: playerID,
-      hand: drawHand(room_id), 
+      hand: newHand,
       index: isRoomCreator ? 0 : room.players.length,
       lastSeen: Date.now(),
       score: 0,
       initialSelectionComplete: false
     };
 
+    if (isRoomCreator) {
+      console.log(`[INITIAL] Player 0 received initial hand of ${newHand.length} cards`);
+    }
+
     room.players.push(newPlayer);
     room.lastActivity = Date.now();
 
     if (room.players.length === MAX_PLAYERS) {
       room.initialSelectionMode = true;
+      room.currentTurnIndex = -1; // Reset turn index until initial selection is complete
       room.lastActivity = Date.now();
     }
 
@@ -200,7 +206,7 @@ app.post("/join", (req, res) => {
       player_id: playerID,
       player_index: newPlayer.index,
       hand: newPlayer.hand,
-      center_card: getCenterCard(room_id),
+      center_card: null, // Don't show center card during initial phase
       current_turn_index: room.currentTurnIndex,
       total_players: room.players.length,
       initial_selection_mode: room.initialSelectionMode,
@@ -227,6 +233,7 @@ app.post("/play_card", (req, res) => {
     }
 
     const room = rooms[room_id];
+    const player = room.players[player_index];
 
     if (player_index !== room.currentTurnIndex && !room.reactionMode) {
       return res.status(403).json({
@@ -235,13 +242,16 @@ app.post("/play_card", (req, res) => {
       });
     }
 
-    const player = room.players.find(p => p.index === player_index);
-
     if (!player) {
       return res.status(404).json({
         status: "error",
         message: "Player not found"
       });
+    }
+
+    // Log before playing card
+    if (player_index === 0) {
+      console.log(`[BEFORE_PLAY] Player 0 has ${player.hand.length} cards`);
     }
 
     const cardIndex = player.hand.findIndex(c => c.card_id === card.card_id);
@@ -274,6 +284,11 @@ app.post("/play_card", (req, res) => {
     room.centerCard = null;
     room.lastActivity = Date.now();
 
+    // Log after playing card
+    if (player_index === 0) {
+      console.log(`[AFTER_PLAY] Player 0 played a card, now has ${player.hand.length} cards`);
+    }
+
     let response = { 
       status: "ok", 
       center_card: room.centerCard,
@@ -299,6 +314,10 @@ app.post("/play_card", (req, res) => {
       nextPlayer.hand.push(playedCardData);
       response.center_card = null;
       response.message = "Queen played! It goes to the next player's hand.";
+
+      if (nextPlayerIndex === 0) {
+        console.log(`[QUEEN] Player 0 received a Queen, now has ${nextPlayer.hand.length} cards`);
+      }
     } else {
         response.center_card = playedCardData;
         room.reactionMode = true;
@@ -387,7 +406,6 @@ app.post("/select_initial_cards", (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Must select exactly 2 cards.' });
     }
 
-    // Verify the cards exist in player's hand
     const validCards = selected_card_ids.every(card_id => 
       player.hand.some(card => card.card_id === card_id)
     );
@@ -403,21 +421,19 @@ app.post("/select_initial_cards", (req, res) => {
 
     if (allSelected) {
       room.initialSelectionMode = false;
+      room.gameStarted = true;
+      room.currentTurnIndex = 0;
 
-      room.players.forEach(p => {
-        while (p.hand.length < 4) {
-          if (room.deck.length > 0) {
-            p.hand.push(room.deck.pop());
-          } else {
-            break;
-          }
-        }
-      });
+      const centerCard = getCenterCard(room_id);
+      if (centerCard) {
+        centerCard.is_face_up = true;
+      }
+      room.centerCard = centerCard;
 
-      getCenterCard(room_id); 
-
-      if (room.players.length > 0) {
-        room.currentTurnIndex = 0;
+      const firstPlayer = room.players[0];
+      if (room.deck.length > 0) {
+        const turnCard = room.deck.pop();
+        firstPlayer.hand.push(turnCard);
       }
 
       res.json({ 
@@ -427,7 +443,8 @@ app.post("/select_initial_cards", (req, res) => {
         all_players_ready: true,
         initial_selection_mode: false,
         current_turn_index: room.currentTurnIndex,
-        center_card: room.centerCard
+        center_card: room.centerCard,
+        first_turn_card: turnCard
       });
     } else {
       res.json({ 
@@ -544,6 +561,65 @@ app.get("/rooms", (req, res) => {
       status: "ok",
       rooms: activeRooms
     });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
+
+app.post("/draw_card", (req, res) => {
+  try {
+    const { room_id, player_index } = req.body;
+    
+    if (!rooms[room_id]) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Room not found'
+      });
+    }
+
+    const room = rooms[room_id];
+    const player = room.players[player_index];
+
+    if (!player) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Player not found'
+      });
+    }
+
+    if (!room.gameStarted || room.initialSelectionMode) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Game has not started yet'
+      });
+    }
+
+    if (player_index !== room.currentTurnIndex) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Not your turn'
+      });
+    }
+
+    if (room.deck.length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'No cards left in deck'
+      });
+    }
+
+    const drawnCard = room.deck.pop();
+    player.hand.push(drawnCard);
+
+    res.json({
+      status: 'ok',
+      card: drawnCard,
+      message: 'Card drawn successfully'
+    });
+
   } catch (error) {
     res.status(500).json({
       status: 'error',
