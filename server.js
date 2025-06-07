@@ -375,11 +375,12 @@ app.post("/select_initial_cards", (req, res) => {
       }
       room.centerCard = centerCard;
 
-      const firstPlayer = room.players[0];
       let turnCard = null;
       if (room.deck.length > 0) {
         turnCard = room.deck.pop();
-        firstPlayer.hand.push(turnCard);
+        if (player_index === 0) {
+          room.players[0].hand.push(turnCard);
+        }
       }
 
       res.json({ 
@@ -390,7 +391,7 @@ app.post("/select_initial_cards", (req, res) => {
         initial_selection_mode: false,
         current_turn_index: room.currentTurnIndex,
         center_card: room.centerCard,
-        first_turn_card: turnCard
+        first_turn_card: player_index === 0 ? turnCard : null
       });
     } else {
       res.json({ 
