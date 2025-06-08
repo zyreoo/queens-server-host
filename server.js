@@ -21,9 +21,6 @@ function createRoom() {
     deck: [],
     centerCard: null,
     currentTurnIndex: 0,
-    reactionMode: false,
-    reactionValue: null,
-    reactingPlayers: [],
     queensTriggered: false,
     queensPlayerIndex: null,
     finalRoundActive: false,
@@ -219,7 +216,7 @@ app.post("/join", (req, res) => {
 
 app.post("/play_card", (req, res) => {
   try {
-    const { room_id, player_index, card } = req.body;
+    const { room_id, player_index, card, card_id } = req.body;
     
     if (!rooms[room_id]) {
       return res.status(404).json({
@@ -231,10 +228,10 @@ app.post("/play_card", (req, res) => {
     const room = rooms[room_id];
     const player = room.players[player_index];
 
-    if (player_index !== room.currentTurnIndex && !room.reactionMode) {
+    if (player_index !== room.currentTurnIndex) {
       return res.status(403).json({
         status: "error",
-        message: `not ur turn. Current turn: ${room.currentTurnIndex}, ur index: ${player_index}`
+        message: `Not your turn. Current turn: ${room.currentTurnIndex}`
       });
     }
 
@@ -245,78 +242,81 @@ app.post("/play_card", (req, res) => {
       });
     }
 
-    const cardIndex = player.hand.findIndex(c => c.card_id === card.card_id);
+    let cardToPlay;
+    const cardIndex = player.hand.findIndex(c => {
+      if (card) {
+        return c.card_id === card.card_id;
+      } else if (card_id) {
+        return c.card_id === card_id;
+      }
+      return false;
+    });
+
     if (cardIndex === -1) {
       return res.status(400).json({ status: "error", message: "Card not in hand" });
     }
 
-    if (room.reactionMode && card.value !== room.reactionValue) {
-      if (!room.reactingPlayers.includes(player_index)) {
-        room.reactingPlayers.push(player_index);
-        if (room.deck.length > 0) {
-            const penaltyCard = room.deck.pop();
-            player.hand.push(penaltyCard);
-        }
-        return res.json({
-          status: "ok",
-          hand: player.hand,
-          message: "Invalid card, penalty card added",
-          center_card: room.centerCard,
-          current_turn_index: room.currentTurnIndex,
-          total_players: room.players.length
-        });
-      }
-    }
-
-    const playedCardData = { ...card };
-
+    cardToPlay = player.hand[cardIndex];
+    const playedCardData = JSON.parse(JSON.stringify(cardToPlay));
     player.hand.splice(cardIndex, 1);
     
-    room.centerCard = null;
-    room.lastActivity = Date.now();
-
     let response = { 
       status: "ok", 
-      center_card: room.centerCard,
       current_turn_index: room.currentTurnIndex,
       total_players: room.players.length,
+      hand: player.hand
     };
 
     if (playedCardData.rank === "13") {
+      room.centerCard = playedCardData;
       response.center_card = playedCardData;
       response.king_reveal_mode = true;
       response.king_player_index = player_index;
       response.message = "King played! Choose one of your cards to reveal.";
     } else if (playedCardData.rank === "11") {
+      room.centerCard = playedCardData;
       response.center_card = playedCardData;
       response.jack_swap_mode = true;
       response.jack_player_index = player_index;
       response.message = "Jack played! Select a card to swap.";
-      response.hand = player.hand;
       return res.json(response);
     } else if (playedCardData.rank === "12") {
       const nextPlayerIndex = (player_index + 1) % room.players.length;
       const nextPlayer = room.players[nextPlayerIndex];
       nextPlayer.hand.push(playedCardData);
+      room.centerCard = null;
       response.center_card = null;
       response.message = "Queen played! It goes to the next player's hand.";
+      
+      response.next_player_card = playedCardData;
+      const turnResult = nextTurn(room_id);
+      response.current_turn_index = room.currentTurnIndex;
+      if (turnResult.game_over) {
+        response = { ...response, ...turnResult };
+      }
+
+      return res.json(response);
     } else {
-        response.center_card = playedCardData;
-        room.reactionMode = true;
-        room.reactionValue = playedCardData.value;
-        room.reactingPlayers = [];
-        response.reaction_mode = true;
-        response.reaction_value = playedCardData.value;
-        response.message = `Reaction mode active! Play a ${playedCardData.value}.`;
+      room.centerCard = playedCardData;
+      response.center_card = playedCardData;
+      response.message = `Card played: ${playedCardData.rank} of ${playedCardData.suit}`;
     }
     
+    const nextPlayerIndex = (player_index + 1) % room.players.length;
+    const nextPlayer = room.players[nextPlayerIndex];
+    if (room.deck.length > 0) {
+      const nextCard = room.deck.pop();
+      nextCard.is_face_up = true;
+      nextCard.temporary_reveal = true;
+      nextPlayer.hand.push(nextCard);
+      response.next_player_card = nextCard;
+    }
+
     const turnResult = nextTurn(room_id);
     response.current_turn_index = room.currentTurnIndex;
     if (turnResult.game_over) {
-        response = { ...response, ...turnResult };
+      response = { ...response, ...turnResult };
     }
-
-    response.hand = player.hand;
 
     res.json(response);
 
@@ -441,7 +441,7 @@ app.get("/state", (req, res) => {
           suit: card.suit || "Unknown",
           rank: card.rank || "Unknown",
           value: card.value || 0,
-          is_face_up: card.is_face_up || false
+          is_face_up: false // Always face down in hand, temporary_reveal handled by client
         }));
       } else {
         playerData.hand = p.hand.map(card => ({
@@ -454,13 +454,11 @@ app.get("/state", (req, res) => {
     });
 
     const stateData = {
-      center_card: room.centerCard,
+      center_card: room.centerCard ? { ...room.centerCard, is_face_up: true } : null, // Center card always face up
       current_turn_index: room.currentTurnIndex,
       deck_count: room.deck.length,
       total_players: room.players.length,
       players: players,
-      reaction_mode: room.reactionMode,
-      reaction_value: room.reactionValue,
       queens_triggered: room.queensTriggered,
       final_round_active: room.finalRoundActive,
       initial_selection_mode: room.initialSelectionMode,
