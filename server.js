@@ -7,6 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Game constants
 const suits = ["Clubs", "Spades", "Diamonds", "Hearts"];
 const ranks = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"];
 const values = Object.fromEntries(ranks.map((r) => [r, parseInt(r)]));
@@ -148,6 +149,7 @@ app.post("/join", (req, res) => {
     const room = rooms[room_id];
     const isRoomCreator = room.players.length === 0;
     
+    // Check if player is rejoining
     if (player_id) {
       const existing = room.players.find(p => p.id === player_id);
       if (existing) {
@@ -187,6 +189,7 @@ app.post("/join", (req, res) => {
     room.players.push(newPlayer);
     room.lastActivity = Date.now();
 
+    // If room is full, start initial selection phase
     if (room.players.length === MAX_PLAYERS) {
       room.initialSelectionMode = true;
       room.currentTurnIndex = -1;
@@ -198,7 +201,7 @@ app.post("/join", (req, res) => {
       room_id: room_id,
       player_id: playerID,
       player_index: newPlayer.index,
-      hand: newPlayer.hand,
+      hand: newHand,
       center_card: null,
       current_turn_index: room.currentTurnIndex,
       total_players: room.players.length,
@@ -267,13 +270,16 @@ app.post("/play_card", (req, res) => {
       hand: player.hand
     };
 
+    // Handle King card
     if (playedCardData.rank === "13") {
       room.centerCard = playedCardData;
       response.center_card = playedCardData;
       response.king_reveal_mode = true;
       response.king_player_index = player_index;
       response.message = "King played! Choose one of your cards to reveal.";
-    } else if (playedCardData.rank === "12") {
+    }
+    // Handle Queen card
+    else if (playedCardData.rank === "12") {
       const nextPlayerIndex = (player_index + 1) % room.players.length;
       const nextPlayer = room.players[nextPlayerIndex];
       
@@ -292,12 +298,15 @@ app.post("/play_card", (req, res) => {
       }
       
       return res.json(response);
-    } else {
+    }
+    // Handle regular card
+    else {
       room.centerCard = playedCardData;
       response.center_card = playedCardData;
       response.message = `Card played: ${playedCardData.rank} of ${playedCardData.suit}`;
     }
     
+    // Draw card for next player
     const nextPlayerIndex = (player_index + 1) % room.players.length;
     const nextPlayer = room.players[nextPlayerIndex];
     if (room.deck.length > 0) {
@@ -361,16 +370,19 @@ app.post("/select_initial_cards", (req, res) => {
     const allSelected = room.players.every(p => p.initialSelectionComplete);
 
     if (allSelected) {
+      // All players have selected their cards, start the game
       room.initialSelectionMode = false;
       room.gameStarted = true;
       room.currentTurnIndex = 0;
 
+      // Draw center card
       const centerCard = getCenterCard(room_id);
       if (centerCard) {
         centerCard.is_face_up = true;
       }
       room.centerCard = centerCard;
 
+      // Draw first turn card for player 0
       let turnCard = null;
       if (room.deck.length > 0) {
         turnCard = room.deck.pop();
@@ -617,9 +629,10 @@ app.post("/king_reveal", (req, res) => {
   }
 });
 
+// Clean up inactive rooms periodically
 function checkInactiveRooms() {
   const now = Date.now();
-  const inactivityTimeout = 2 * 60 * 1000;
+  const inactivityTimeout = 2 * 60 * 1000; // 2 minutes
   for (const roomId in rooms) {
     const room = rooms[roomId];
     if (now - room.lastActivity > inactivityTimeout) {
@@ -628,7 +641,7 @@ function checkInactiveRooms() {
   }
 }
 
-setInterval(checkInactiveRooms, 30 * 1000);
+setInterval(checkInactiveRooms, 30 * 1000); // Check every 30 seconds
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {}); 
