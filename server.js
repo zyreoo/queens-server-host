@@ -273,28 +273,24 @@ app.post("/play_card", (req, res) => {
       response.king_reveal_mode = true;
       response.king_player_index = player_index;
       response.message = "King played! Choose one of your cards to reveal.";
-    } else if (playedCardData.rank === "11") {
-      room.centerCard = playedCardData;
-      response.center_card = playedCardData;
-      response.jack_swap_mode = true;
-      response.jack_player_index = player_index;
-      response.message = "Jack played! Select a card to swap.";
-      return res.json(response);
     } else if (playedCardData.rank === "12") {
       const nextPlayerIndex = (player_index + 1) % room.players.length;
       const nextPlayer = room.players[nextPlayerIndex];
-      nextPlayer.hand.push(playedCardData);
+      
+      const queenCard = { ...playedCardData, is_face_up: false };
+      nextPlayer.hand.push(queenCard);
+      
       room.centerCard = null;
       response.center_card = null;
-      response.message = "Queen played! It goes to the next player's hand.";
+      response.message = "Queen played! Card added to next player's hand.";
+      response.next_player_card = queenCard;
       
-      response.next_player_card = playedCardData;
       const turnResult = nextTurn(room_id);
       response.current_turn_index = room.currentTurnIndex;
       if (turnResult.game_over) {
         response = { ...response, ...turnResult };
       }
-
+      
       return res.json(response);
     } else {
       room.centerCard = playedCardData;
@@ -563,6 +559,54 @@ app.post("/draw_card", (req, res) => {
       status: 'ok',
       card: drawnCard,
       message: 'Card drawn successfully'
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
+
+app.post("/king_reveal", (req, res) => {
+  try {
+    const { room_id, player_index, revealed_card_id } = req.body;
+    
+    if (!rooms[room_id]) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Room not found'
+      });
+    }
+
+    const room = rooms[room_id];
+    const player = room.players[player_index];
+
+    if (!player) {
+      return res.status(404).json({
+        status: "error",
+        message: "Player not found"
+      });
+    }
+
+    const card = player.hand.find(c => c.card_id === revealed_card_id);
+    if (!card) {
+      return res.status(400).json({
+        status: "error",
+        message: "Card not found in hand"
+      });
+    }
+
+    // Set temporary reveal flag
+    card.temporary_reveal = true;
+
+    const turnResult = nextTurn(room_id);
+    res.json({
+      status: "ok",
+      message: "Card revealed successfully",
+      current_turn_index: room.currentTurnIndex,
+      revealed_card: card
     });
 
   } catch (error) {
